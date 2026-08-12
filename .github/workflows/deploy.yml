@@ -21,15 +21,21 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
-            # Navega até o diretório correto na VPS
-            cd ~/ChaletToGo
-            
-            # Atualiza o repositório no servidor
+            # Garante a criação da estrutura de pastas
+            mkdir -p ~/ChaletToGo/Dashboard
+            cd ~/ChaletToGo/Dashboard
+
+            # Se a pasta estiver vazia / não for um repo git, realiza o clone inicial
+            if [ ! -d ".git" ]; then
+              git clone https://github.com/ChaletToGo/eco-analytics-dashboard.git .
+            fi
+
+            # Atualiza o projeto para a versão mais recente da branch main
             git fetch origin main
             git reset --hard origin/main
-            
-            # Sobe a aplicação atualizada com Docker Compose
+
+            # Reconstrói a imagem Docker e sobe o container na porta 3200
             docker compose up -d --build --remove-orphans
-            
-            # Limpa imagens antigas para poupar espaço em disco
+
+            # Limpa imagens não utilizadas para poupar espaço em disco
             docker image prune -f
