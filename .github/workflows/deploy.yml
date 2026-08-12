@@ -3,7 +3,7 @@ name: Deploy Dashboard (Docker) to VPS
 on:
   push:
     branches:
-      - main # Dispara o deploy no push para a branch main
+      - main
 
 jobs:
   deploy:
@@ -21,15 +21,15 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
-            # Navega até a pasta do projeto na VPS
-            cd /var/www/meu-dashboard
+            # Navega até o diretório correto na VPS
+            cd ~/ChaletToGo
             
-            # Sincroniza o código com a branch main
+            # Atualiza o repositório no servidor
             git fetch origin main
             git reset --hard origin/main
             
-            # Sobe o container via Docker Compose compilando a nova versão
+            # Sobe a aplicação atualizada com Docker Compose
             docker compose up -d --build --remove-orphans
             
-            # Remove imagens antigas não utilizadas para poupar espaço em disco
+            # Limpa imagens antigas para poupar espaço em disco
             docker image prune -f
