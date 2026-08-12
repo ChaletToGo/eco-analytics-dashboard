@@ -1,0 +1,35 @@
+name: Deploy Dashboard (Docker) to VPS
+
+on:
+  push:
+    branches:
+      - main # Dispara o deploy no push para a branch main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH usando Docker Compose
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            # Navega até a pasta do projeto na VPS
+            cd /var/www/meu-dashboard
+            
+            # Sincroniza o código com a branch main
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # Sobe o container via Docker Compose compilando a nova versão
+            docker compose up -d --build --remove-orphans
+            
+            # Remove imagens antigas não utilizadas para poupar espaço em disco
+            docker image prune -f

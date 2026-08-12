@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eco_dashboard
+    restart: always
+    ports:
+      - '3200:3200'
+    env_file:
+      - .env.local
+    environment:
+      - NODE_ENV=production
+      - PORT=3200
