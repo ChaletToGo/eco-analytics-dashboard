@@ -23,13 +23,12 @@ export async function POST(request: NextRequest) {
 
       if (chaletError) throw chaletError;
 
-      // 2. Se houver um modelo associado, processa a atualização da imagem/modelo
+      // 2. Se houver um modelo associado, processa a atualização do modelo e imagem
       if (plan.chalet_model_id) {
         let publicImageUrl: string | null = null;
 
         // A) Se enviou imagem em Base64 (image_data), faz o upload para o Storage
         if (plan.image_data && typeof plan.image_data === 'string' && plan.image_data.startsWith('data:image')) {
-          // Extrai o tipo mime (ex: image/png, image/jpeg) e os dados brutos em Base64
           const matches = plan.image_data.match(/^data:(image\/\w+);base64,(.+)$/);
           
           if (matches && matches.length === 3) {
@@ -38,10 +37,8 @@ export async function POST(request: NextRequest) {
             const extension = mimeType.split('/')[1] || 'png';
             const buffer = Buffer.from(base64String, 'base64');
 
-            // Define um nome único para o arquivo no Storage
             const fileName = `${plan.chalet_model_id}-${Date.now()}.${extension}`;
 
-            // Faz upload para o bucket 'chales'
             const { error: uploadError } = await supabaseAdmin.storage
               .from('chales')
               .upload(fileName, buffer, {
@@ -54,7 +51,6 @@ export async function POST(request: NextRequest) {
               throw uploadError;
             }
 
-            // Obtém a URL pública do arquivo enviado
             const { data: publicUrlData } = supabaseAdmin.storage
               .from('chales')
               .getPublicUrl(fileName);
@@ -67,18 +63,29 @@ export async function POST(request: NextRequest) {
           publicImageUrl = plan.image_url;
         }
 
-        // 3. Atualiza o modelo no banco de dados se houver uma imagem nova/atualizada
-        if (publicImageUrl) {
-          const { error: modelError } = await supabaseAdmin
-            .from('chalet_models')
-            .update({
-              image_url: publicImageUrl,
-              image_data: null, // Limpa o Base64 pesado para economizar memória do banco
-            })
-            .eq('id', plan.chalet_model_id);
+        // 3. Monta o objeto com as alterações do modelo chalet_models
+        const modelUpdates: Record<string, any> = {
+          name: plan.name,
+          tag: plan.tag,
+          area: plan.area,
+          description: plan.description,
+          features: plan.features,
+          whatsapp_link: plan.whatsapp_link || null, // Atualiza o link do WhatsApp
+        };
 
-          if (modelError) throw modelError;
+        // Adiciona/atualiza a imagem apenas se uma nova URL foi gerada ou definida
+        if (publicImageUrl) {
+          modelUpdates.image_url = publicImageUrl;
+          modelUpdates.image_data = null; // Limpa o Base64 do banco
         }
+
+        // Executa a atualização na tabela chalet_models
+        const { error: modelError } = await supabaseAdmin
+          .from('chalet_models')
+          .update(modelUpdates)
+          .eq('id', plan.chalet_model_id);
+
+        if (modelError) throw modelError;
       }
     }
 
