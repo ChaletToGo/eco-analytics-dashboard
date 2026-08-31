@@ -6,76 +6,76 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const slug = searchParams.get('slug');
 
-    // Monta as consultas base usando o client admin para evitar bloqueios de RLS
-    let pvQuery = supabaseAdmin
+    // 1. Busca todos os eventos da tabela site_events
+    let query = supabaseAdmin
       .from('site_events')
-      .select('session_id, landing_page_slug')
-      .eq('event_name', 'page_view');
+      .select('event_name, session_id, component_name, button_label, model_slug, value, utm_source, utm_campaign, metadata, landing_page_slug');
 
-    let engQuery = supabaseAdmin
-      .from('site_events')
-      .select('component_name, metadata, landing_page_slug')
-      .eq('event_name', 'component_engagement');
+    // Se o slug for informado, filtra no banco
+    if (slug) {
+      query = query.ilike('landing_page_slug', slug);
+    }
 
-    let scrollQuery = supabaseAdmin
-      .from('site_events')
-      .select('metadata, landing_page_slug')
-      .eq('event_name', 'scroll_depth');
+    const { data: events, error } = await query;
+    if (error) throw error;
 
-    // Se um slug foi fornecido, filtra os dados considerando case-insensitive
-    const { data: pageViews, error: pvError } = await pvQuery;
-    if (pvError) throw pvError;
+    const allEvents = events || [];
 
-    const { data: engagements, error: engError } = await engQuery;
-    if (engError) throw engError;
+    // --- A. SUMMARY & LEADS / PIPELINE ---
+    const pageViews = allEvents.filter((e) => e.event_name === 'page_view');
+    const totalViews = pageViews.length;
+    const totalSessions = new Set(pageViews.map((e) => e.session_id).filter(Boolean)).size;
 
-    const { data: scrolls, error: scrollError } = await scrollQuery;
-    if (scrollError) throw scrollError;
+    // Eventos de clique de interesse (Leads)
+    const leadEvents = allEvents.filter((e) => e.event_name === 'click_book_interest');
+    const totalLeadsCount = leadEvents.length;
 
-    // Filtra localmente por slug (ignorando diferenças de maiúsculas/minúsculas)
-    const filteredPv = slug
-      ? pageViews?.filter(
-          (item) =>
-            item.landing_page_slug &&
-            item.landing_page_slug.toLowerCase() === slug.toLowerCase()
-        )
-      : pageViews;
+    // Calcula o valor total do pipeline (considera a coluna 'value' ou o valor dentro do 'metadata')
+    const totalPipelineValue = leadEvents.reduce((acc, curr) => {
+      const val = curr.value ?? curr.metadata?.value ?? 0;
+      return acc + Number(val);
+    }, 0);
 
-    const filteredEng = slug
-      ? engagements?.filter(
-          (item) =>
-            item.landing_page_slug &&
-            item.landing_page_slug.toLowerCase() === slug.toLowerCase()
-        )
-      : engagements;
+    // --- B. DESEMPENHO POR MODELO DE CHALÉ (model_slug) ---
+    const modelStatsMap: Record<string, { clicks: number; totalValue: number }> = {};
 
-    const filteredScrolls = slug
-      ? scrolls?.filter(
-          (item) =>
-            item.landing_page_slug &&
-            item.landing_page_slug.toLowerCase() === slug.toLowerCase()
-        )
-      : scrolls;
+    leadEvents.forEach((item) => {
+      const model = item.model_slug || 'Outros';
+      const val = Number(item.value ?? item.metadata?.value) || 0;
 
-    // Processamento dos dados
-    const totalPageViews = filteredPv?.length || 0;
-    const uniqueSessions = new Set(filteredPv?.map((pv) => pv.session_id)).size;
-
-    const componentStatsMap: Record<string, { totalViews: number; totalTime: number; maxTime: number }> = {};
-    filteredEng?.forEach((item) => {
-      const comp = item.component_name || 'Desconhecido';
-      const time = Number(item.metadata?.time_visible_seconds) || 0;
-
-      if (!componentStatsMap[comp]) {
-        componentStatsMap[comp] = { totalViews: 0, totalTime: 0, maxTime: 0 };
+      if (!modelStatsMap[model]) {
+        modelStatsMap[model] = { clicks: 0, totalValue: 0 };
       }
 
-      componentStatsMap[comp].totalViews += 1;
-      componentStatsMap[comp].totalTime += time;
-      if (time > componentStatsMap[comp].maxTime) {
-        componentStatsMap[comp].maxTime = time;
-      }
+      modelStatsMap[model].clicks += 1;
+      modelStatsMap[model].totalValue += val;
     });
+
+    const modelPerformance = Object.entries(modelStatsMap).map(([modelSlug, stats]) => ({
+      modelSlug,
+      clicks: stats.clicks,
+      totalValue: stats.totalValue,
+    }));
+
+    // --- C. ENGAJAMENTO DE COMPONENTES ---
+    const componentStatsMap: Record<string, { totalViews: number; totalTime: number; maxTime: number }> = {};
+    
+    allEvents
+      .filter((e) => e.event_name === 'component_engagement')
+      .forEach((item) => {
+        const comp = item.component_name || 'Desconhecido';
+        const time = Number(item.metadata?.time_visible_seconds) || 0;
+
+        if (!componentStatsMap[comp]) {
+          componentStatsMap[comp] = { totalViews: 0, totalTime: 0, maxTime: 0 };
+        }
+
+        componentStatsMap[comp].totalViews += 1;
+        componentStatsMap[comp].totalTime += time;
+        if (time > componentStatsMap[comp].maxTime) {
+          componentStatsMap[comp].maxTime = time;
+        }
+      });
 
     const componentEngagement = Object.entries(componentStatsMap).map(([componentName, stats]) => ({
       componentName,
@@ -84,26 +84,67 @@ export async function GET(request: NextRequest) {
       maxTimeSeconds: stats.maxTime,
     }));
 
+    // --- D. PROFUNDIDADE DE SCROLL ---
     const scrollStatsMap: Record<number, number> = { 25: 0, 50: 0, 75: 0, 100: 0 };
-    filteredScrolls?.forEach((item) => {
-      const depth = Number(item.metadata?.depth_percentage);
-      if (depth in scrollStatsMap) {
-        scrollStatsMap[depth] += 1;
-      }
-    });
+    
+    allEvents
+      .filter((e) => e.event_name === 'scroll_depth')
+      .forEach((item) => {
+        const depth = Number(item.metadata?.depth_percentage);
+        if (depth in scrollStatsMap) {
+          scrollStatsMap[depth] += 1;
+        }
+      });
 
     const scrollDepthStats = Object.entries(scrollStatsMap).map(([depth, count]) => ({
       depthPercentage: Number(depth),
       count,
     }));
 
+    // --- E. ORIGENS DE TRÁFEGO (UTMs) ---
+    const utmStatsMap: Record<string, { source: string; campaign: string; count: number }> = {};
+
+    pageViews.forEach((item) => {
+      const source = item.utm_source || 'Direto / Orgânico';
+      const campaign = item.utm_campaign || '-';
+      const key = `${source}_${campaign}`;
+
+      if (!utmStatsMap[key]) {
+        utmStatsMap[key] = { source, campaign, count: 0 };
+      }
+
+      utmStatsMap[key].count += 1;
+    });
+
+    const utmStats = Object.values(utmStatsMap).sort((a, b) => b.count - a.count);
+
+    // --- F. BOTÕES MAIS CLICADOS (button_label) ---
+    const buttonStatsMap: Record<string, number> = {};
+
+    allEvents
+      .filter((e) => e.button_label)
+      .forEach((item) => {
+        const label = item.button_label || 'Botão sem nome';
+        buttonStatsMap[label] = (buttonStatsMap[label] || 0) + 1;
+      });
+
+    const topButtons = Object.entries(buttonStatsMap)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Retorno final estruturado compatível com o componente SiteMetrics
     return NextResponse.json({
       summary: {
-        totalViews: totalPageViews,
-        totalSessions: uniqueSessions,
+        totalViews,
+        totalSessions,
+        totalLeadsCount,
+        totalPipelineValue,
       },
       componentEngagement,
       scrollDepthStats,
+      modelPerformance,
+      utmStats,
+      topButtons,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

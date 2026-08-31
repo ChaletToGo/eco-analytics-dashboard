@@ -53,18 +53,36 @@ export default function DashboardLayout({
   async function fetchSites() {
     setLoadingSites(true);
     try {
-      const { data, error } = await supabase
+      // 1. Busca os locais oficiais diretamente da tabela `locations`
+      const { data: locationsData, error: locationsError } = await supabase
+        .from('locations')
+        .select('id, name, slug')
+        .eq('active', true);
+
+      if (locationsError) throw locationsError;
+
+      const uniqueSitesMap = new Map<string, Site>();
+
+      // Adiciona as localizações cadastradas (incluindo a Matriz)
+      locationsData?.forEach((item) => {
+        if (item.slug && !uniqueSitesMap.has(item.slug)) {
+          uniqueSitesMap.set(item.slug, {
+            id: item.id || item.slug,
+            name: item.name,
+            slug: item.slug,
+          });
+        }
+      });
+
+      // 2. Fallback: Busca slugs em `site_events` para garantir que qualquer outro evento antigo também apareça
+      const { data: eventsData } = await supabase
         .from('site_events')
         .select('landing_page_slug')
         .not('landing_page_slug', 'is', null);
 
-      if (error) throw error;
-
-      const uniqueSitesMap = new Map<string, Site>();
-      data?.forEach((item) => {
+      eventsData?.forEach((item) => {
         const slug = item.landing_page_slug;
         if (slug && !uniqueSitesMap.has(slug)) {
-          // Adicionada a tipagem (word: string) aqui:
           const formattedName = slug
             .split('-')
             .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -139,7 +157,7 @@ export default function DashboardLayout({
           <div className="p-4 pt-2 space-y-3">
             <div className="flex items-center justify-between px-3">
               <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-                Landing Pages
+                Landing Pages & Sites
               </span>
               <button
                 onClick={fetchSites}
@@ -170,7 +188,7 @@ export default function DashboardLayout({
                 </div>
               ) : filteredSites.length === 0 ? (
                 <div className="p-4 text-center text-xs text-zinc-600">
-                  Nenhuma landing page registrada.
+                  Nenhuma página registrada.
                 </div>
               ) : (
                 filteredSites.map((site) => {
