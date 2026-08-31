@@ -74,6 +74,7 @@ export function SitePlans({
   onRefreshPlans,
 }: SitePlansProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [creatingPlan, setCreatingPlan] = useState(false);
   const [newPlan, setNewPlan] = useState({
     name: '',
     tag: 'OPÇÃO',
@@ -121,43 +122,37 @@ export function SitePlans({
       return;
     }
 
+    setCreatingPlan(true);
+
     try {
       const featuresArray = newPlan.featuresStr
         .split(',')
         .map((f) => f.trim())
         .filter(Boolean);
 
-      const modelSlug = newPlan.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-
-      const { data: modelData, error: modelError } = await supabase
-        .from('chalet_models')
-        .insert({
-          slug: `${modelSlug}-${Date.now()}`,
+      // Envia a criação para a rota backend /api/plans/create usando Service Role
+      const response = await fetch('/api/plans/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location_id: locationDetails.id,
           name: newPlan.name,
           tag: newPlan.tag,
           area: newPlan.area,
           description: newPlan.description,
           features: featuresArray,
-          whatsapp_link: newPlan.whatsapp_link || null,
-          image_data: newPlan.image_data || null,
-        })
-        .select()
-        .single();
+          price: newPlan.price,
+          total_units: newPlan.total_units,
+          whatsapp_link: newPlan.whatsapp_link,
+          image_data: newPlan.image_data,
+        }),
+      });
 
-      if (modelError) throw modelError;
+      const result = await response.json();
 
-      const { error: locChaletError } = await supabase
-        .from('location_chalets')
-        .insert({
-          location_id: locationDetails.id,
-          chalet_model_id: modelData.id,
-          price: Number(newPlan.price),
-          total_units: Number(newPlan.total_units),
-          available_units: Number(newPlan.total_units),
-          is_active: true,
-        });
-
-      if (locChaletError) throw locChaletError;
+      if (!response.ok) {
+        throw new Error(result.error || 'Erro ao criar plano');
+      }
 
       alert('Novo plano adicionado com sucesso!');
       setIsModalOpen(false);
@@ -172,10 +167,13 @@ export function SitePlans({
         whatsapp_link: '',
         image_data: '',
       });
+
       await onRefreshPlans();
     } catch (e: any) {
       console.error('Erro ao criar modelo:', e);
       alert('Erro ao criar plano: ' + e.message);
+    } finally {
+      setCreatingPlan(false);
     }
   }
 
@@ -587,10 +585,10 @@ export function SitePlans({
               </button>
               <button
                 onClick={handleCreateNewPlan}
-                disabled={saving}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/20"
+                disabled={creatingPlan}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/20 disabled:opacity-50"
               >
-                {saving ? 'Criando...' : 'Salvar e Criar Plano'}
+                {creatingPlan ? 'Criando...' : 'Salvar e Criar Plano'}
               </button>
             </div>
           </div>
